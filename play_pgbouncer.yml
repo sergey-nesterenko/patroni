@@ -1,0 +1,46 @@
+---
+- name: INSTALL pgbouncer
+  hosts: DB_TEST
+  become: true
+
+  vars:
+   - pg_v: 11
+
+  handlers:
+   - name: restart pgbouncer
+     service: name=pgbouncer state=restarted enabled=yes
+   - name: reload pgbouncer
+     shell: sudo -u postgres PGPASSWORD=123456 /usr/pgsql-{{ pg_v }}/bin/psql -h localhost -p 6432 -U postgres pgbouncer -c 'RELOAD;'
+
+  pre_tasks:
+   - name: CHECK pgbouncer INSTALLED
+     shell: find_pgbouncer=$(pgbouncer --version|head -n1 2>/dev/null); if [ -n "$find_pgbouncer" ]; then echo "is"; else echo "not"; fi;
+     register: is_pgbouncer
+
+  tasks:
+   - block:
+     - name: INSTALL pgbouncer
+       yum: name=pgbouncer state=latest
+
+     - name: COPY pgbouncer.ini
+       copy: src=./pgbouncer.ini dest=/etc/pgbouncer/pgbouncer.ini mode=0644
+
+     - name: COPY userlist.txt
+       copy: src=./userlist.txt dest=/etc/pgbouncer/userlist.txt mode=0644
+
+     - name: START pgbouncer
+       service: name=pgbouncer state=started enabled=yes
+
+     when: is_pgbouncer.stdout == "not"
+
+   - name: COPY config file
+     copy: src=./pgbouncer.ini dest=/etc/pgbouncer/pgbouncer.ini
+     notify:
+      - reload pgbouncer
+     #when: is_pgbouncer.stdout == "is"
+
+   - name: COPY userlist
+     copy: src=./userlist.txt dest=/etc/pgbouncer/userlist.txt
+     notify:
+      - reload pgbouncer    
+     #when: is_pgbouncer.stdout == "is"
