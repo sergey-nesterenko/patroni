@@ -1,0 +1,74 @@
+---
+- name: INSTALL PG
+  hosts: DB_TEST
+  become: true
+
+  vars:
+   - pg_v: 11
+
+  handlers:
+   - name: restart pg
+     service: name=postgresql-{{ pg_v }} state=restarted enabled=yes
+     when: is_patroni.stdout == "not"
+
+   - name: restart patroni
+     shell: export LC_ALL=C.UTF-8; /opt/app/patroni/bin/patronictl -c /etc/patroni/patroni.yml restart "{{ scope }}" "{{ ansible_hostname }}" --force
+     # service: name=patroni state=restarted enabled=yes
+     when: is_patroni.stdout == "is"
+
+  pre_tasks:
+   - name: CHECK PG INSTALLED
+     shell: find_pg=$(psql --version 2>/dev/null); if [ -n "$find_pg" ]; then echo "is"; else echo "not"; fi;
+     register: is_pg
+   - name: CHECK PATRONI INSTALLED
+     shell: find_patroni=$(patroni --version 2>/dev/null); if [ -n "$find_patroni" ]; then echo "is"; else echo "not"; fi;
+     register: is_patroni
+
+  tasks:
+   - block:
+     # - name: DNF update
+     #   dnf:
+     #     name: "*"
+     #     state: present
+      - name: INSTALL pgdg-redhat-repo-latest.noarch.rpm
+        dnf:
+          name: 'https://download.postgresql.org/pub/repos/yum/reporpms/EL-8-x86_64/pgdg-redhat-repo-latest.noarch.rpm'
+          disable_gpg_check: yes
+          state: present
+      - name: DIS MODULE
+        shell: dnf module disable postgresql -y
+      - name: INSTALL PG
+        dnf:
+          name: "postgresql{{ pg_v }}-server,postgresql{{ pg_v }},postgresql{{ pg_v }}-contrib,postgresql{{ pg_v }}-devel"
+          state: latest
+      - name: INIT PG
+        shell: /usr/pgsql-{{ pg_v }}/bin/postgresql-{{ pg_v }}-setup initdb
+      
+      - name: FILL PATH ENV VAR .bash_profile
+        lineinfile: dest=~/.bash_profile line='export PATH=/usr/pgsql-{{ pg_v }}/bin:$PATH' insertafter='EOF' regexp='export PATH=/usr/pgsql-{{ pg_v }}/bin:$PATH' state=present
+      - name: FILL PGPATH ENV VAR .bash_profile
+        lineinfile: dest=~/.bash_profile line='export PGPATH=/var/lib/pgsql/{{ pg_v }}/data' insertafter='EOF' regexp='export PGPATH=/var/lib/pgsql/{{ pg_v }}/data' state=present
+      - name: FILL PGDATA ENV VAR .bash_profile
+        lineinfile: dest=~/.bash_profile line='export PGDATA=/var/lib/pgsql/{{ pg_v }}/data' insertafter='EOF' regexp='export PGDATA=/var/lib/pgsql/{{ pg_v }}/data' state=present
+      - name: SOURCE .bash_profile
+        shell: source ~/.bash_profile
+
+      - name: COPY pg_hba.conf.j2 TO PGDATA
+        template: src=./pg_hba.conf.j2 dest=/var/lib/pgsql/{{ pg_v }}/data/pg_hba.conf mode=0644
+
+      - name: START PG
+        service: name=postgresql-{{ pg_v }} state=started enabled=yes
+
+      - name: specify postgres password
+        shell: sudo -u postgres /usr/pgsql-{{ pg_v }}/bin/psql -tc "alter user postgres with encrypted password '123456'"
+      - name: create replication user repl
+        shell: sudo -u postgres /usr/pgsql-{{ pg_v }}/bin/psql -tc "create role repl with replication password 'repl' LOGIN"
+
+     when: is_pg.stdout == "not"
+
+   - name: COPY pg_hba.conf.j2 TO PGDATA
+     template: src=./pg_hba.conf.j2 dest=/var/lib/pgsql/{{ pg_v }}/data/pg_hba.conf mode=0644
+     notify:
+      - restart pg
+      - restart patroni
+     when: is_pg.stdout == "is"
