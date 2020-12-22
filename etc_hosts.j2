@@ -1,0 +1,5 @@
+{% for node in groups['DB_TEST'] %}
+{% if hostvars[node].ansible_host != ansible_default_ipv4.address %}
+{{ hostvars[node].ansible_host }} {{ hostvars[node].hostname }} {{ hostvars[node].hostname }}.rutube.dev
+{% endif %}
+{% endfor %}

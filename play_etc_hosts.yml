@@ -1,0 +1,12 @@
+---
+- name: FILL /etc/hosts
+  hosts: DB_TEST
+  become: yes
+
+  tasks:
+
+  - name: COPY TEMPLATE
+    template: src=./etc_hosts.j2 dest=/tmp/etc_hosts.tmp mode=0744
+
+  - name: FILL UNIQUE ROWS FROM TEMPLATE TO /etc/hosts
+    shell: IFS=$'\n'; for row in $(cat /tmp/etc_hosts.tmp); do if ! grep -q "$row" /etc/hosts; then echo "$row" >> /etc/hosts; fi; done;
