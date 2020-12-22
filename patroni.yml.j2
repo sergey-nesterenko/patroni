@@ -1,0 +1,183 @@
+scope: {{ scope }}
+name: {{ ansible_hostname }}
+namespace: /service/
+
+log:
+  dir: /var/log/patroni
+  file:
+    num: 10
+
+restapi:
+  listen: {{ ansible_host }}:8008
+  connect_address: {{ ansible_host }}:8008
+#  certfile: /etc/ssl/certs/ssl-cert-snakeoil.pem
+#  keyfile: /etc/ssl/private/ssl-cert-snakeoil.key
+#  authentication:
+#    username: username
+#    password: password
+
+etcd:
+  hosts: {% for node in groups['DB_TEST'] %}{{ hostvars[node].ansible_host }}:2379{% if not loop.last %},{% endif %}{% endfor %}
+
+bootstrap:
+  # this section will be written into Etcd:/<namespace>/<scope>/config after initializing new clu$
+  # and all other cluster members will use it as a `global configuration`
+  dcs:
+    ttl: 30
+    loop_wait: 10
+    retry_timeout: 10
+    maximum_lag_on_failover: 1048576
+    master_start_timeout: 300
+    synchronous_mode: false
+    synchronous_mode_strict: false
+    #standby_cluster:
+      #host: 127.0.0.1
+      #port: 1111
+      #primary_slot_name: patroni
+    postgresql:
+      use_pg_rewind: true
+      use_slots: true
+      parameters:
+        max_connections: 200
+        superuser_reserved_connections: 5
+        huge_pages: try
+        shared_buffers: 2GB
+        temp_buffers: 128MB
+        work_mem: 128MB
+        maintenance_work_mem: 256MB
+        effective_cache_size: 6GB
+        bgwriter_delay: 100ms
+        bgwriter_lru_maxpages: 1000
+        bgwriter_lru_multiplier: 5.0
+        checkpoint_timeout: 15min
+        checkpoint_completion_target: 0.9
+        min_wal_size: 80MB
+        max_wal_size: 10GB
+        wal_buffers: 32MB
+        default_statistics_target: 1000
+        seq_page_cost: 1
+        random_page_cost: 4
+        effective_io_concurrency: 500
+        synchronous_commit: on
+        autovacuum: on
+        autovacuum_max_workers: 5
+        autovacuum_vacuum_scale_factor: 0.01
+        autovacuum_analyze_scale_factor: 0.02
+        autovacuum_naptime: 1s
+        autovacuum_vacuum_cost_delay: 5ms
+        max_files_per_process: 4096
+        archive_mode: on
+        archive_timeout: 1800s
+        archive_command: cd .
+        wal_level: replica
+        wal_keep_segments: 256
+        max_wal_senders: 10
+        max_replication_slots: 10
+        max_worker_processes: 24
+        max_parallel_workers: 12
+        max_parallel_workers_per_gather: 4
+        max_parallel_maintenance_workers: 2
+        hot_standby: "on"
+        wal_log_hints: "on"
+        shared_preload_libraries: 'pg_stat_statements,auto_explain'
+        pg_stat_statements.max: 10000
+        pg_stat_statements.track: 'all'
+        pg_stat_statements.save: off
+        auto_explain.log_min_duration: '10s'
+        auto_explain.log_analyze: 'true'
+        auto_explain.log_buffers: 'true'
+        auto_explain.log_timing: 'false'
+        auto_explain.log_triggers: 'true'
+        auto_explain.log_verbose: 'true'
+        auto_explain.log_nested_statements: 'true'
+        track_io_timing: on
+        log_lock_waits: on
+        log_temp_files: 0
+        track_activities: on
+        track_counts: on
+        track_functions: all
+
+
+
+ #      recovery_conf:
+#        restore_command: cp ../wal_archive/%f %p
+
+  # some desired options for 'initdb'
+  initdb:  # Note: It needs to be a list (some options need values, others are switches)
+  - encoding: UTF8
+  - locale: en_US.UTF-8
+  - data-checksums
+
+  pg_hba:  # Add following lines to pg_hba.conf after running 'initdb'
+  - host replication repl 127.0.0.1/32 md5
+  - host all all 0.0.0.0/0 md5
+
+ # Additional script to be launched after initial cluster creation (will be passed the connection$
+# post_init: /usr/local/bin/setup_cluster.sh
+
+  # Some additional users which needs to be created after initializing new cluster
+#  users:
+#    admin:
+#      password: admin-pass
+#      options:
+#        - createrole
+#        - createdb
+
+
+postgresql:
+  listen: 0.0.0.0:5432
+  connect_address: {{ ansible_host }}:5432
+  use_unix_socket: true
+  data_dir: /var/lib/pgsql/11/data
+  bin_dir: /usr/pgsql-11/bin
+  config_dir: /var/lib/pgsql/11/data
+  pgpass: /var/lib/pgsql/.pgpass
+  authentication:
+    replication:
+      username: repl
+      password: repl
+    superuser:
+      username: postgres
+      password: 123456
+#     rewind:  # Has no effect on postgres 10 and lower
+#      username: rewind_user
+#      password: rewind_password
+  parameters:
+    unix_socket_directories: /var/run/postgresql
+    stats_temp_directory: /var/lib/pgsql_stats_tmp
+
+#  callbacks:
+#    on_start:
+#    on_stop:
+#    on_restart:
+#    on_reload:
+#    on_role_change:
+
+  create_replica_methods:
+#   - pgbackrest
+#   - wal_e
+   - basebackup
+# pgbackrest:
+#   command: /usr/bin/pgbackrest --stanza=<Stanza_Name> --delta restore
+#   keep_data: True
+#   no_params: True
+#  wal_e
+#    command: patroni_wale_restore
+#    no_master: 1
+#    envdir: /etc/wal_e/envdir
+#    use_iam: 1
+  basebackup:
+    max-rate: '100M'
+
+ #watchdog:
+#  mode: automatic # Allowed values: off, automatic, required
+#  device: /dev/watchdog
+#  safety_margin: 5
+
+tags:
+    nofailover: false
+    noloadbalance: false
+    clonefrom: false
+    nosync: false
+# specify a node to replicate from. This can be used to implement a cascading replication.
+#    replicatefrom: (node name)

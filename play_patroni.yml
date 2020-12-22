@@ -1,0 +1,81 @@
+---
+- name: INSTALL PATRONI
+  hosts: DB_TEST
+  become: true
+
+  vars:
+    - patroni_v: 1.6.5-1
+ 
+  handlers:
+    - name: reload systemctl
+      shell: systemctl daemon-reload
+
+    - name: restart patroni
+      service: name=patroni state=restarted enabled=yes
+      when: is_patroni.stdout == "not"
+
+    - name: reload patroni
+      shell: export LC_ALL=C.UTF-8; /opt/app/patroni/bin/patronictl -c /etc/patroni/patroni.yml reload "{{ scope }}" "{{ ansible_hostname }}" --force
+      when: is_patroni.stdout == "is"
+
+    - name: make new replica
+      shell: export LC_ALL=C.UTF-8; /opt/app/patroni/bin/patronictl -c /etc/patroni/patroni.yml reinit "{{ scope }}" "{{ ansible_hostname }}" --force
+      when: is_patroni.stdout == "not"
+
+  pre_tasks:
+   - name: CHECK PATRONI INSTALLED
+     shell: find_patroni=$(patroni --version 2>/dev/null); if [ -n "$find_patroni" ]; then echo "is"; else echo "not"; fi;
+     register: is_patroni
+
+  tasks:
+   - block:
+     - name: MAKE NEEDED DIRS
+       file:
+         path: "{{ item }}"
+         state: directory
+         mode: 0775
+         owner: postgres
+         group: postgres
+       with_items:
+         - /etc/patroni
+         - /var/lib/pgsql_stats_tmp
+         - /var/log/patroni
+
+     - name: INSTALL PATRONI
+       yum:
+        name: https://github.com/cybertec-postgresql/patroni-packaging/releases/download/{{ patroni_v }}/patroni-{{ patroni_v }}.rhel7.x86_64.rpm
+        disable_gpg_check: yes
+        state: present
+
+     - name: TOUCH .pgpass
+       file: path=/var/lib/pgsql/.pgpass state=touch mode=0600 owner=postgres group=postgres
+     - name: TOUCH .pgsql_profile
+       file: path=/var/lib/pgsql/.pgsql_profile state=touch mode=0664 owner=postgres group=postgres 
+
+     - name: FILL PATH ENV VAR .pgsql_profile
+       lineinfile: dest=/var/lib/pgsql/.pgsql_profile line='export PATH=/opt/app/patroni/bin:$PATH' insertafter='EOF' regexp='export PATH=/opt/app/patroni/bin:$PATH' state=present
+     - name: FILL ENV VAR ETCDCTL_API=2
+       lineinfile: dest=/var/lib/pgsql/.pgsql_profile line='export ETCDCTL_API=2' insertafter='EOF' regexp='export ETCDCTL_API=2' state=present
+     - name: SOURCE .pgsql_profile
+       shell: source /var/lib/pgsql/.pgsql_profile
+       become: yes
+       become_method: sudo
+       become_user: postgres     
+ 
+     when: is_patroni.stdout == "not"
+
+   - name: COPY patroni.service
+     copy: src=./patroni.service dest=/usr/lib/systemd/system/patroni.service mode=0664
+     notify:
+       - reload systemctl
+
+   - name: COPY patroni.yml.j2
+     template: src=./patroni.yml.j2 dest=/etc/patroni/patroni.yml mode=0644 owner=postgres group=postgres
+     notify:
+       - restart patroni
+       - reload patroni
+       - make new replica
+
+    
+   
+    
