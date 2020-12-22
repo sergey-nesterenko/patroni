@@ -1,0 +1,65 @@
+---
+- name: ADD NEW ETCD NODE IN CLUSTER
+  hosts: DB_TEST
+  become: yes
+
+  vars:
+   - etcd_v: 3.4.10
+  
+  handlers:
+   - name: systemd reload
+     shell: systemctl daemon-reload
+   - name: restart etcd
+     service: name=etcd state=restarted enabled=yes
+
+  pre_tasks:
+  - name: CHECK ETCD INSTALLED
+    shell: find_etcd=$(/usr/local/bin/etcd --version|head -n1 2>/dev/null); if [ -n "$find_etcd" ]; then echo "is"; else echo "not"; fi;
+    register: is_etcd
+  
+  tasks:
+
+  - block:
+     - name: INSTALL etcd
+       shell: "{{ item }}"
+       with_items:
+        - wget https://github.com/etcd-io/etcd/releases/download/v{{ etcd_v }}/etcd-v{{ etcd_v }}-linux-amd64.tar.gz
+        - tar xf etcd-v{{ etcd_v }}-linux-amd64.tar.gz
+        - cd etcd-v{{ etcd_v }}-linux-amd64
+        - mv etcd-v{{ etcd_v }}-linux-amd64/etcd* /usr/local/bin/
+        - mkdir -p /var/lib/etcd
+        - mkdir -p /etc/etcd
+        - groupadd --system etcd
+        - useradd -s /sbin/nologin --system -g etcd etcd
+        - chown -R etcd:etcd /var/lib/etcd
+        - chmod 700 /var/lib/etcd
+
+     - name: ADD THE PATH IN .bash_profile
+       lineinfile: dest=~/.bash_profile line='export PATH=/usr/local/bin:$PATH' insertafter='EOF' regexp='export PATH=/usr/local/bin:\$PATH' state=present
+     - name: TURN ON ETCDCTL_API=2
+       lineinfile: dest=~/.bash_profile line='export ETCDCTL_API=2' insertafter='EOF' regexp='export ETCDCTL_API=2' state=present
+     - name: SOURCE .bash_profile
+       shell: source ~/.bash_profile
+
+    when: is_etcd.stdout == "not"
+
+  - name: CHECK IF CURRENT NODE IN CLUSTER
+    shell: find_n=$(/usr/local/bin/etcdctl member list|grep "{{ ansible_host }}" ); if [ -n "$find_n" ]; then echo "is"; else echo "not"; fi;
+    register: is_node
+    delegate_to: "{{ groups.test_servers[0] }}"
+
+  - name: ADD CURRENT NODE INTO CLUSTER IF NEED
+    shell: /usr/local/bin/etcdctl member add {{ ansible_hostname }} --peer-urls=http://{{ ansible_host }}:2380
+    delegate_to: "{{ groups.test_servers[0] }}"
+    when: is_node.stdout == "not"
+
+
+  - name: COPY etcd.service TO /etc/systemd/system/etcd.service
+    copy: src=./etcd.service dest=/etc/systemd/system mode=0644
+    notify:
+     - systemd reload
+
+  - name: COPY etcd.conf.j2 TO /etc/etcd/etcd.conf
+    template: src=./etcd.conf.j2 dest=/etc/etcd/etcd.conf mode=0644
+    notify:
+     - restart etcd
