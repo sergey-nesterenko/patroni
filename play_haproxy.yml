@@ -1,0 +1,71 @@
+---
+- name: INSTALL HAPROXY
+  hosts: DB_TEST
+  become: true
+
+  vars:
+    - ha_v: 2.2.4
+
+  handlers:
+   - name: restart haproxy
+     service: name=haproxy state=restarted enabled=yes
+     when: is_ha.stdout == "not"
+
+   - name: reload haproxy
+     service: name=haproxy state=reloaded enabled=yes
+
+  pre_tasks:
+   - name: CHECK HAPROXY INSTALLED
+     shell: find_ha=$(haproxy -v|head -n1 2>/dev/null); if [ -n "$find_ha" ]; then echo "is"; else echo "not"; fi;
+     register: is_ha
+
+  tasks:
+   - block:
+      - name: INSTALL TOOLS
+        yum:
+         name:
+          - gcc
+          - pcre-devel
+          - tar
+          - make
+          - wget
+         state: present
+ 
+      - name: INSTALL HAPROXY
+        shell: "{{ item }}"
+        with_items:
+          - wget http://www.haproxy.org/download/2.2/src/haproxy-{{ ha_v }}.tar.gz -O ~/haproxy.tar.gz
+          - tar xzvf ~/haproxy.tar.gz -C ~/
+          #- cd ~/haproxy-{{ ha_v }}
+          #- make TARGET=linux-glibc
+          #- make install
+          - mkdir -p /etc/haproxy
+          - mkdir -p /var/lib/haproxy
+          - touch /var/lib/haproxy/stats
+
+      - name: MAKE TARGET
+        make: 
+          chdir: ~/haproxy-{{ ha_v }}
+          params:
+            TARGET: linux-glibc
+
+      - name: MAKE INSTALL
+        make: chdir=~/haproxy-{{ ha_v }} target=install
+
+      - name: CONTINUE INSTALL
+        shell: "{{ item }}"
+        with_items:
+          - ln -s /usr/local/sbin/haproxy /usr/sbin/haproxy
+          - cp ~/haproxy-{{ ha_v }}/examples/haproxy.init /etc/init.d/haproxy
+          - chmod 755 /etc/init.d/haproxy
+          - systemctl daemon-reload
+          - chkconfig haproxy on
+          - useradd -r haproxy
+
+     when: is_ha.stdout == "not"
+
+   - name: COPY haproxy.cfg
+     template: src=./haproxy.cfg.j2  dest=/etc/haproxy/haproxy.cfg  mode=0664
+     notify:
+      - restart haproxy
+      - reload haproxy
