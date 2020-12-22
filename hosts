@@ -1,0 +1,12 @@
+[test_servers]
+test1  ansible_host=10.18.8.53 hostname=vml-hq-dev-rabbit-1
+test2  ansible_host=10.19.8.10 hostname=vml-frd-dev-pg-2
+test3  ansible_host=10.19.8.11  hostname=vml-frd-dev-pg-3
+
+[new_test]
+test4  ansible_host=10.10.136.10 hostname=vml-m9-dev-pg-2
+test5  ansible_host=10.10.136.11  hostname=vml-m9-dev-pg-3
+
+[DB_TEST:children]
+test_servers
+new_test
