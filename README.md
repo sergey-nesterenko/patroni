@@ -21,4 +21,4 @@
 #
 # РАСКАТАТЬ haproxy
 # 6) ansible-playbook -i hosts play_haproxy.yml
-
+######################
